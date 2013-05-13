@@ -1,0 +1,137 @@
+# pylearn2 tutorial example: cifar_grbm_smd.yaml by Ian Goodfellow
+
+
+!obj:pylearn2.train.Train {
+    dataset: &train !obj:keypoints_dataset.FacialKeypointDataset {
+        which_set: 'train',
+        start: 0,
+        stop: 6500,
+        preprocessor : !obj:pylearn2.datasets.preprocessing.Pipeline {
+                           items : [
+                              !obj:pylearn2.datasets.preprocessing.Standardize {
+                              }, !obj:pylearn2.datasets.preprocessing.ShuffleAndSplit {
+                                     seed: 26,
+                                     start: 0,
+                                     stop: 6500,
+                              }
+                           ]
+        },
+        fit_preprocessor: True,
+        fit_test_preprocessor: True,
+},
+
+    model: !obj:pylearn2.models.rbm.GaussianBinaryRBM {
+        nvis : 9216,
+        nhid : 2000,
+
+        # The elements of the weight matrices of the RBM will be drawn
+        # independently from U(-0.05, 0.05)
+        irange : 0.05,
+
+        # There are many ways to parameterize a GRBM. Here we use a
+        # parameterization that makes the correspondence to denoising
+        # autoencoders more clear.
+        energy_function_class : !obj:pylearn2.energy_functions.rbm_energy.grbm_type_1 {},
+
+        # Some learning algorithms are capable of estimating the standard
+        # deviation of the visible units of a GRBM successfully, others are not
+        # and just fix the standard deviation to 1.  We're going to show off
+        # and learn the standard deviation.
+        learn_sigma : True,
+
+        # Learning works better if we provide a smart initialization for the
+        # parameters.  Here we start sigma at .4 , which is about the same
+        # standard deviation as the training data. We start the biases on the
+        # hidden units at -2, which will make them have fairly sparse
+        # activations.
+        init_sigma : .4,
+        init_bias_hid : -2.,
+
+        # Some GRBM training algorithms can't handle the visible units being
+        # noisy and just use their mean for all computations. We will show off
+        # and not use that hack here.
+        mean_vis : False,
+
+        # One hack we will make is we will scale back the gradient steps on the
+        # sigma parameter. This way we don't need to worry about sigma getting
+        # too small prematurely (if it gets too small too fast the learning
+        # signal gets weak).
+        sigma_lr_scale : 1e-3
+
+    },
+
+    algorithm: !obj:pylearn2.training_algorithms.sgd.SGD {
+        # The learning rate determines how big of steps the learning algorithm
+        # takes.  Here we use fairly big steps initially because we have a
+        # learning rate adjustment scheme that will scale them down if
+        # necessary.
+        learning_rate : 1e-1,
+
+        # Each gradient step will be based on this many examples
+        batch_size : 100,
+
+        # We'll monitor our progress by looking at the first 20 batches of the
+        # training dataset. This is an estimate of the training error. To be
+        # really exhaustive, we could use the entire training set instead,
+        # or to avoid overfitting, we could use held out data instead.
+        monitoring_batches : 20,
+
+        monitoring_dataset : 
+           {
+                'train' : *train ,
+                'valid' : !obj:keypoints_dataset.FacialKeypointDataset {
+                              which_set: 'train',
+                              preprocessor : !obj:pylearn2.datasets.preprocessing.Pipeline {
+                                              items : [
+                                                 !obj:pylearn2.datasets.preprocessing.Standardize {
+                                                 }, !obj:pylearn2.datasets.preprocessing.ShuffleAndSplit {
+                                                        seed: 26,
+                                                        start: 6500,
+                                                        stop: 7049,
+                                                 }
+                                              ]
+                              },
+                              fit_preprocessor: True,
+                          }
+                # We don't have labels for the public test set
+            },
+
+        # Here we specify the objective function that stochastic gradient
+        # descent should minimize.  In this case we use denoising score
+        # matching, which makes this RBM behave as a denoising autoencoder.
+        # See
+        # Pascal Vincent. "A Connection Between Score Matching and Denoising
+        # Auutoencoders." Neural Computation, 2011
+        # for details.
+
+        cost : !obj:pylearn2.costs.ebm_estimation.SMD {
+
+            # Denoising score matching uses a corruption process to transform
+            # the raw data.  Here we use additive gaussian noise.
+
+            corruptor : !obj:pylearn2.corruption.GaussianCorruptor {
+                    stdev : 0.4
+            },
+        },
+
+        # We'll use the monitoring dataset to figure out when to stop training.
+        #
+        # In this case, we stop if there is less than a 1% decrease in the
+        # training error in the last epoch.  You'll notice that the learned
+        # features are a bit noisy. If you'd like nice smooth features you can
+        # make this criterion stricter so that the model will train for longer.
+        # (setting N to 10 should make the weights prettier, but will make it
+        # run a lot longer)
+
+        termination_criterion : !obj:pylearn2.termination_criteria.MonitorBased {
+            channel_name: 'valid_objective',
+            prop_decrease : 0.01,
+            N : 5,
+        },
+    },
+
+    save_path: 'pretrainedLayerRBM3.pkl',
+    save_freq : 1
+}
+
+
